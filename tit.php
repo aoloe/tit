@@ -39,11 +39,6 @@ if (!isset($statuses)) {
     $statuses = array(0 => "Active", 1 => "Resolved");
 }
 
-if (get_magic_quotes_gpc()){
-    foreach($_GET  as $k=>$v) $_GET [$k] = stripslashes($v);
-    foreach($_POST as $k=>$v) $_POST[$k] = stripslashes($v);
-}
-
 class TinyTemplate {
     var $vars = [];
     var $d = ['\{\{', '}}'];
