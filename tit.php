@@ -16,12 +16,12 @@ $config = (isset($config) ? $config : []) + [
 	'db_file' => "tit.db", // File containing the sqlite DB (will be created if missing)
 
     // Send notifications for specific events
-	'notify_issue_create' => true,
-    'notify_issue_edit' => true,
-	'notify_issue_delete' => true,
-	'notify_issue_status' => true, // issue status change (solved / unsolved)
-	'notify_issue_priority' => true,
-	'notify_comment_create' => true,
+	'notify_issue_create' => false,
+    'notify_issue_edit' => false,
+	'notify_issue_delete' => false,
+	'notify_issue_status' => false, // issue status change (solved / unsolved)
+	'notify_issue_priority' => false,
+	'notify_comment_create' => false,
 ];
 
 // List of users.
