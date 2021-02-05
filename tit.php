@@ -41,7 +41,7 @@ if (!isset($statuses)) {
 
 class TinyTemplate {
     var $vars = [];
-    var $d = ['\{\{', '}}'];
+    var $d = ['\{\{ ', ' }}'];
 
     static public function factory() {
         return new TinyTemplate();
@@ -52,8 +52,11 @@ class TinyTemplate {
         return $this;
     }
 
-    public function add($name, $value) {
-        $this->vars[$name] = $value;
+    public function add($names, $value) {
+        if (!is_array($names)) {$names = [$names];}
+        foreach ($names as $name) {
+            $this->vars[$name] = $value;
+        }
         return $this;
     }
 
@@ -65,6 +68,26 @@ class TinyTemplate {
                 $html);
     }
 }
+
+$base_html_template = <<<'EOD'
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>{{ title }}</title>
+    {{ head }}
+    <style>
+    {{ style }}
+    </style>
+  </head>
+  <body>
+    <div id="container">
+      <h1>{{ title }}</h1>
+      {{ body }}
+    </div>
+  </body>
+</html>
+EOD;
 
 
 // Here we go...
@@ -88,12 +111,25 @@ if (isset($_GET['logout'])){
     header("Location: ".$_SERVER["REQUEST_URI"]);
 }
 
-$login_html = "<html><head><title>Tiny Issue Tracker</title><style>body,input{font-family:sans-serif;font-size:11px;} label{display:block;}</style></head>
-                             <body><h2>".$config['title']." - Issue Tracker</h2><p>$message</p><form method='POST' action='".$_SERVER["REQUEST_URI"]."'>
-                             <label>Username</label><input type='text' name='u' />
-                             <label>Password</label><input type='password' name='p' />
-                             <label></label><input type='submit' name='login' value='Login' />
-                             </form></body></html>";
+$login_html_template = <<<'EOD'
+    <p>{{ message }}</p>
+    <form method='POST' action='{{ action }}'>
+      <label>Username</label><input type='text' name='u'>
+      <label>Password</label><input type='password' name='p'>
+      <label></label><input type='submit' name='login' value='Login'/>
+    </form>
+EOD;
+
+$login_html = TinyTemplate::factory()
+    ->add('message', $message)
+    ->add('action', $_SERVER["REQUEST_URI"])
+    ->fetch($login_html_template);
+$login_html = TinyTemplate::factory()
+    ->add('title', $config['title'])
+    ->add('body', $login_html)
+    ->add('style', "body,input {font-family:sans-serif;font-size:11px;}\nlabel{display:block;}")
+    ->add(['head'], '')
+    ->fetch($base_html_template);
 
 // show login page on bad credential
 if (check_credentials($_SESSION['tit']['username'], $_SESSION['tit']['password'])==-1) die($login_html);
@@ -348,40 +384,9 @@ function setWatch($id,$addToWatch){
     $db->exec("UPDATE issues SET notify_emails='$notify_emails' WHERE id='$id'");
 }
 
+ob_start();
 ?>
-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
-    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
-<head>
-    <title><?php echo $config['title'], isset($_GET["id"]) ? (" - #".$_GET["id"]) : "" , " - Issue Tracker"; ?></title>
-    <meta http-equiv="content-type" content="text/html;charset=utf-8" />
-    <style>
-        html { overflow-y: scroll;}
-        body { font-family: sans-serif; font-size: 11px; background-color: #aaa;}
-        a, a:visited{color:#004989; text-decoration:none;}
-        a:hover{color: #666; text-decoration: underline;}
-        label{ display: block; font-weight: bold;}
-        table{border-collapse: collapse;}
-        th{text-align: left; background-color: #f2f2f2;}
-        tr:hover{background-color: #f0f0f0;}
-        #menu{float: right;}
-        #container{width: 760px; margin: 0 auto; padding: 20px; background-color: #fff;}
-        #footer{padding:10px 0 0 0; margin-top: 20px; text-align: center; border-top: 1px solid #ccc;}
-        #create{padding: 15px; background-color: #f2f2f2;}
-        .issue{padding:10px 20px; margin: 10px 0; background-color: #f2f2f2;}
-        .comment{padding:5px 10px 10px 10px; margin: 10px 0; border: 1px solid #ccc;}
-        .comment:target{outline: 2px solid #444;}
-        .comment-meta{color: #666;}
-        .p1, .p1 a{color: red;}
-        .p3, .p3 a{color: #666;}
-        .hide{display:none;}
-        .left{float: left;}
-        .right{float: right;}
-        .clear{clear:both;}
-    </style>
-</head>
-<body>
-<div id='container'>
+
     <div id="menu">
         <?php
             foreach($statuses as $code=>$name) {
@@ -389,27 +394,27 @@ function setWatch($id,$addToWatch){
                 echo "<a href='{$_SERVER['PHP_SELF']}?status={$code}' alt='{$name} Issues' $style>{$name} Issues</a> | ";
             }
         ?>
-        <a href="<?php echo $_SERVER['PHP_SELF']; ?>?logout" alt="Logout">Logout [<?php echo $_SESSION['tit']['username']; ?>]</a>
+        <a href="<?= $_SERVER['PHP_SELF']; ?>?logout" alt="Logout">Logout [<?= $_SESSION['tit']['username']; ?>]</a>
     </div>
 
-    <h1><?php echo $config['title']; ?></h1>
+    <h1><?= $config['title']; ?></h1>
 
-    <h2><a href="#" onclick="document.getElementById('create').className='';document.getElementById('title').focus();"><?php echo ($issue['id']==''?"Create":"Edit"); ?> Issue <?php echo $issue['id'] ?></a></h2>
-    <div id="create" class='<?php echo isset($_GET['editissue'])?'':'hide'; ?>'>
+    <h2><a href="#" onclick="document.getElementById('create').className='';document.getElementById('title').focus();"><?= ($issue['id']==''?"Create":"Edit"); ?> Issue <?= $issue['id'] ?></a></h2>
+    <div id="create" class='<?= isset($_GET['editissue'])?'':'hide'; ?>'>
         <a href="#" onclick="document.getElementById('create').className='hide';" style="float: right;">[Close]</a>
         <form method="POST">
-            <input type="hidden" name="id" value="<?php echo $issue['id']; ?>" />
-            <label>Title</label><input type="text" size="50" name="title" id="title" value="<?php echo htmlentities($issue['title']); ?>" />
-            <label>Description</label><textarea name="description" rows="5" cols="50"><?php echo htmlentities($issue['description']); ?></textarea>
-            <label></label><input type="submit" name="createissue" value="<?php echo ($issue['id']==''?"Create":"Edit"); ?>" />
-<? if (!$issue['id']) { ?>
+            <input type="hidden" name="id" value="<?= $issue['id']; ?>" />
+            <label>Title</label><input type="text" size="50" name="title" id="title" value="<?= htmlentities($issue['title']); ?>" />
+            <label>Description</label><textarea name="description" rows="5" cols="50"><?= htmlentities($issue['description']); ?></textarea>
+            <label></label><input type="submit" name="createissue" value="<?= ($issue['id']==''?"Create":"Edit"); ?>" />
+<?php if (!$issue['id']) : ?>
             Priority
                 <select name="priority">
                     <option value="1">High</option>
                     <option selected value="2">Medium</option>
                     <option value="3">Low</option>
                 </select>
-<? } ?>
+<?php endif ?>
         </form>
     </div>
 
@@ -455,13 +460,13 @@ function setWatch($id,$addToWatch){
         </div>
         <div class='left'>
             Priority <select name="priority" onchange="location='<?php echo $_SERVER['PHP_SELF']; ?>?changepriority&id=<?php echo $issue['id']; ?>&priority='+this.value">
-                <option value="1"<?php echo ($issue['priority']==1?"selected":""); ?>>High</option>
-                <option value="2"<?php echo ($issue['priority']==2?"selected":""); ?>>Medium</option>
-                <option value="3"<?php echo ($issue['priority']==3?"selected":""); ?>>Low</option>
+                <option value="1"<?php echo ($issue['priority']==1?" selected":""); ?>>High</option>
+                <option value="2"<?php echo ($issue['priority']==2?" selected":""); ?>>Medium</option>
+                <option value="3"<?php echo ($issue['priority']==3?" selected":""); ?>>Low</option>
             </select>
             Status <select name="priority" onchange="location='<?php echo $_SERVER['PHP_SELF']; ?>?changestatus&id=<?php echo $issue['id']; ?>&status='+this.value">
             <?php foreach($statuses as $code=>$name): ?>
-                <option value="<?php echo $code; ?>"<?php echo ($issue['status']==$code?"selected":""); ?>><?php echo $name; ?></option>
+                <option value="<?php echo $code; ?>"<?php echo ($issue['status']==$code?" selected":""); ?>><?php echo $name; ?></option>
             <?php endforeach; ?>
             </select>
         </div>
@@ -502,6 +507,40 @@ function setWatch($id,$addToWatch){
     <div id="footer">
         Powered by <a href="https://github.com/jwalanta/tit" alt="Tiny Issue Tracker" target="_blank">Tiny Issue Tracker</a>
     </div>
-</div>
-</body>
-</html>
+<?php
+$body = ob_get_contents();
+ob_end_clean();
+
+$base_css_rules = <<<'EOD'
+        html { overflow-y: scroll;}
+        body { font-family: sans-serif; font-size: 11px; background-color: #aaa;}
+        a, a:visited{color:#004989; text-decoration:none;}
+        a:hover{color: #666; text-decoration: underline;}
+        label{ display: block; font-weight: bold;}
+        table{border-collapse: collapse;}
+        th{text-align: left; background-color: #f2f2f2;}
+        tr:hover{background-color: #f0f0f0;}
+        #menu{float: right;}
+        #container{width: 760px; margin: 0 auto; padding: 20px; background-color: #fff;}
+        #footer{padding:10px 0 0 0; margin-top: 20px; text-align: center; border-top: 1px solid #ccc;}
+        #create{padding: 15px; background-color: #f2f2f2;}
+        .issue{padding:10px 20px; margin: 10px 0; background-color: #f2f2f2;}
+        .comment{padding:5px 10px 10px 10px; margin: 10px 0; border: 1px solid #ccc;}
+        .comment:target{outline: 2px solid #444;}
+        .comment-meta{color: #666;}
+        .p1, .p1 a{color: red;}
+        .p3, .p3 a{color: #666;}
+        .hide{display:none;}
+        .left{float: left;}
+        .right{float: right;}
+        .clear{clear:both;}
+EOD;
+
+$title = $config['title'] . (isset($_GET["id"]) ? (" - #".$_GET["id"]) : "") . " - Issue Tracker";
+
+print(TinyTemplate::factory()
+    ->add('title', $title)
+    ->add('body', $body)
+    ->add('style', $base_css_rules)
+    ->add(['head'], '')
+    ->fetch($base_html_template));
