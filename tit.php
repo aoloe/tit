@@ -60,12 +60,16 @@ class TinyTemplate {
         return $this;
     }
 
-    public function fetch($html) {
-        return preg_replace_callback("/{$this->d[0]}([a-z_-]+){$this->d[1]}/",
-                function($m) {
-                  return array_key_exists($m[1], $this->vars) ? $this->vars[$m[1]] : '';
-                },
-                $html);
+    public function fetch($html, $next_variable = null) {
+        $result = preg_replace_callback(
+            "/{$this->d[0]}([a-z_-]+){$this->d[1]}/",
+            fn($m) =>  array_key_exists($m[1], $this->vars) ? $this->vars[$m[1]] : '',
+            $html);
+        if (is_null($next_variable)) {
+            return $result;
+        }
+        $this->vars = [$next_variable => $result];
+        return $this;
     }
 }
 
@@ -123,10 +127,8 @@ EOD;
 $login_html = TinyTemplate::factory()
     ->add('message', $message)
     ->add('action', $_SERVER["REQUEST_URI"])
-    ->fetch($login_html_template);
-$login_html = TinyTemplate::factory()
+    ->fetch($login_html_template, 'body')
     ->add('title', $config['title'])
-    ->add('body', $login_html)
     ->add('style', "body,input {font-family:sans-serif;font-size:11px;}\nlabel{display:block;}")
     ->add(['head'], '')
     ->fetch($base_html_template);
