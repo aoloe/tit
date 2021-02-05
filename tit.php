@@ -1,51 +1,43 @@
 <?php
 /*
- *      Tiny Issue Tracker (TIT) v2.0
+ *      Tinier Issue Tracker (TITter) v1.0
  *      SQLite based, single file Issue Tracker
  *
+ *      Copyright 2021 Ale Rimoldi <ale at graphicslab dot org>
  *      Copyright 2010-2013 Jwalanta Shrestha <jwalanta at gmail dot com>
  *      GNU GPL
  */
 
-///////////////////
-// CONFIGURATION //
-///////////////////
+// Configs: if they already exist, add them to the existing ones
+$config = (isset($config) ? $config : []) + [
+    'title' => "My Project", // Project Title
+	'email' => "noreply@example.com", // "From" email address for notifications
 
-if (!defined("TIT_INCLUSION"))
-{
-	$TITLE = "My Project";              // Project Title
-	$EMAIL = "noreply@example.com";     // "From" email address for notifications
+	'db_file' => "tit.db", // File containing the sqlite DB (will be created if missing)
 
-	// Array of users.
-	// Mandatory fields: username, password (md5 hash)
-	// Optional fields: email, admin (true/false)
+    // Send notifications for specific events
+	'notify_issue_create' => true,
+    'notify_issue_edit' => true,
+	'notify_issue_delete' => true,
+	'notify_issue_status' => true, // issue status change (solved / unsolved)
+	'notify_issue_priority' => true,
+	'notify_comment_create' => true,
+];
 
-	$USERS = array(
-		array("username"=>"admin","password"=>md5("admin"),"email"=>"admin@example.com","admin"=>true),
-		array("username"=>"user" ,"password"=>md5("user") ,"email"=>"user@example.com"),
-	);
-
-	// PDO Connection string ()
-	// eg, SQlite: sqlite:<filename> (Warning: if you're upgrading from an earlier version of TIT, you have to use "sqlite2"!)
-	//     MySQL: mysql:dbname=<dbname>;host=<hostname>
-	$DB_CONNECTION = "sqlite:tit.db";
-	$DB_USERNAME = "";
-	$DB_PASSWORD = "";
-
-	// Select which notifications to send
-	$NOTIFY["ISSUE_CREATE"]     = TRUE;     // issue created
-	$NOTIFY["ISSUE_EDIT"]       = TRUE;     // issue edited
-	$NOTIFY["ISSUE_DELETE"]     = TRUE;     // issue deleted
-	$NOTIFY["ISSUE_STATUS"]     = TRUE;     // issue status change (solved / unsolved)
-	$NOTIFY["ISSUE_PRIORITY"]   = TRUE;     // issue status change (solved / unsolved)
-	$NOTIFY["COMMENT_CREATE"]   = TRUE;     // comment post
-
-	// Modify this issue types
-	$STATUSES = array(0 => "Active", 1 => "Resolved");
+// List of users.
+// Mandatory fields: username, password (md5 hash)
+// Optional fields: email, admin (true/false)
+if (!isset($users)) {
+    $users = array(
+        array("username"=>"admin","password"=>md5("admin"),"email"=>"admin@example.com","admin"=>true),
+        array("username"=>"user" ,"password"=>md5("user") ,"email"=>"user@example.com"),
+    );
 }
-////////////////////////////////////////////////////////////////////////
-////// DO NOT EDIT BEYOND THIS IF YOU DON'T KNOW WHAT YOU'RE DOING /////
-////////////////////////////////////////////////////////////////////////
+
+// List of statuses.
+if (!isset($statuses)) {
+    $statuses = array(0 => "Active", 1 => "Resolved");
+}
 
 if (get_magic_quotes_gpc()){
 	foreach($_GET  as $k=>$v) $_GET [$k] = stripslashes($v);
@@ -60,7 +52,7 @@ $message = "";
 if (isset($_POST["login"])){
 	$n = check_credentials($_POST["u"],md5($_POST["p"]));
 	if ($n>=0){
-		$_SESSION['tit']=$USERS[$n];
+		$_SESSION['tit']=$users[$n];
 
 		header("Location: ".$_SERVER["REQUEST_URI"]);
 	}
@@ -74,7 +66,7 @@ if (isset($_GET['logout'])){
 }
 
 $login_html = "<html><head><title>Tiny Issue Tracker</title><style>body,input{font-family:sans-serif;font-size:11px;} label{display:block;}</style></head>
-							 <body><h2>$TITLE - Issue Tracker</h2><p>$message</p><form method='POST' action='".$_SERVER["REQUEST_URI"]."'>
+							 <body><h2>".$config['title']." - Issue Tracker</h2><p>$message</p><form method='POST' action='".$_SERVER["REQUEST_URI"]."'>
 							 <label>Username</label><input type='text' name='u' />
 							 <label>Password</label><input type='password' name='p' />
 							 <label></label><input type='submit' name='login' value='Login' />
@@ -84,7 +76,7 @@ $login_html = "<html><head><title>Tiny Issue Tracker</title><style>body,input{fo
 if (check_credentials($_SESSION['tit']['username'], $_SESSION['tit']['password'])==-1) die($login_html);
 
 // Check if db exists
-try{$db = new PDO($DB_CONNECTION, $DB_USERNAME, $DB_PASSWORD);}
+try{$db = new PDO('sqlite:'.$config['db_file']);}
 catch (PDOException $e) {die("DB Connection failed: ".$e->getMessage());}
 
 // create tables if not exist
@@ -139,8 +131,8 @@ if (isset($_POST["createissue"])){
 
 	// gather all emails
 	$emails=array();
-	for ($i=0;$i<count($USERS);$i++){
-		if ($USERS[$i]["email"]!='') $emails[] = $USERS[$i]["email"];
+	for ($i=0;$i<count($users);$i++){
+		if ($users[$i]["email"]!='') $emails[] = $users[$i]["email"];
 	}
 	$notify_emails = implode(",",$emails);
 
@@ -154,16 +146,16 @@ if (isset($_POST["createissue"])){
 		if ($id==''){
 			// created
 			$id=$db->lastInsertId();
-			if ($NOTIFY["ISSUE_CREATE"])
+			if ($config['notify_issue_create'])
 				notify( $id,
-								"[$TITLE] New Issue Created",
+								"[".$config['title']."] New Issue Created",
 								"New Issue Created by {$user}\r\nTitle: $title\r\nURL: http://{$_SERVER['HTTP_HOST']}{$_SERVER['PHP_SELF']}?id=$id");
 		}
 		else{
 			// edited
-			if ($NOTIFY["ISSUE_EDIT"])
+			if ($config['notify_issue_edit'])
 				notify( $id,
-								"[$TITLE] Issue Edited",
+								"[".$config['title']."] Issue Edited",
 								"Issue edited by {$user}\r\nTitle: $title\r\nURL: http://{$_SERVER['HTTP_HOST']}{$_SERVER['PHP_SELF']}?id=$id");
 		}
 	}
@@ -181,9 +173,9 @@ if (isset($_GET["deleteissue"])){
 		@$db->exec("DELETE FROM issues WHERE id='$id'");
 		@$db->exec("DELETE FROM comments WHERE issue_id='$id'");
 
-		if ($NOTIFY["ISSUE_DELETE"])
+		if ($config['notify_issue_delete'])
 			notify( $id,
-							"[$TITLE] Issue Deleted",
+							"[".$config['title']."] Issue Deleted",
 							"Issue deleted by {$_SESSION['tit']['username']}\r\nTitle: $title");
 	}
 	header("Location: {$_SERVER['PHP_SELF']}");
@@ -196,9 +188,9 @@ if (isset($_GET["changepriority"])){
 	$priority=pdo_escape_string($_GET['priority']);
 	if ($priority>=1 && $priority<=3) @$db->exec("UPDATE issues SET priority='$priority' WHERE id='$id'");
 
-	if ($NOTIFY["ISSUE_PRIORITY"])
+	if ($config['notify_issue_priority'])
 		notify( $id,
-						"[$TITLE] Issue Priority Changed",
+						"[".$config['title']."] Issue Priority Changed",
 						"Issue Priority changed by {$_SESSION['tit']['username']}\r\nTitle: ".get_col($id,"issues","title")."\r\nURL: http://{$_SERVER['HTTP_HOST']}{$_SERVER['PHP_SELF']}?id=$id");
 
 	header("Location: {$_SERVER['PHP_SELF']}?id=$id");
@@ -210,10 +202,10 @@ if (isset($_GET["changestatus"])){
 	$status=pdo_escape_string($_GET['status']);
 	@$db->exec("UPDATE issues SET status='$status' WHERE id='$id'");
 
-	if ($NOTIFY["ISSUE_STATUS"])
+	if ($config['notify_issue_status'])
 		notify( $id,
-						"[$TITLE] Issue Marked as ".$STATUSES[$status],
-						"Issue marked as {$STATUSES[$status]} by {$_SESSION['u']}\r\nTitle: ".get_col($id,"issues","title")."\r\nURL: http://{$_SERVER['HTTP_HOST']}{$_SERVER['PHP_SELF']}?id=$id");
+						"[".$config['title']."] Issue Marked as ".$statuses[$status],
+						"Issue marked as {$statuses[$status]} by {$_SESSION['u']}\r\nTitle: ".get_col($id,"issues","title")."\r\nURL: http://{$_SERVER['HTTP_HOST']}{$_SERVER['PHP_SELF']}?id=$id");
 
 	header("Location: {$_SERVER['PHP_SELF']}?id=$id");
 }
@@ -246,9 +238,9 @@ if (isset($_POST["createcomment"])){
 		$db->exec($query);
 	}
 
-	if ($NOTIFY["COMMENT_CREATE"])
+	if ($config['notify_comment_create'])
 		notify( $id,
-						"[$TITLE] New Comment Posted",
+						"[".$config['title']."] New Comment Posted",
 						"New comment posted by {$user}\r\nTitle: ".get_col($id,"issues","title")."\r\nURL: http://{$_SERVER['HTTP_HOST']}{$_SERVER['PHP_SELF']}?id=$issue_id");
 
 	header("Location: {$_SERVER['PHP_SELF']}?id=$issue_id");
@@ -280,10 +272,10 @@ function pdo_escape_string($str){
 
 // check credentials, returns -1 if not okay
 function check_credentials($u, $p){
-	global $USERS;
+	global $users;
 
 	$n=0;
-	foreach ($USERS as $user){
+	foreach ($users as $user){
 		if (strcasecmp($user['username'],$u)===0 && $user['password']==$p) return $n;
 		$n++;
 	}
@@ -304,8 +296,8 @@ function notify($id, $subject, $body){
 	$to = $result[0]['notify_emails'];
 
 	if ($to!=''){
-		global $EMAIL;
-		$headers = "From: $EMAIL" . "\r\n" . 'X-Mailer: PHP/' . phpversion();
+		global $config;
+		$headers = "From: ".$config['email']."" . "\r\n" . 'X-Mailer: PHP/' . phpversion();
 
 		mail($to, $subject, $body, $headers);       // standard php mail, hope it passes spam filter :)
 	}
@@ -338,7 +330,7 @@ function setWatch($id,$addToWatch){
 	"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
 <head>
-	<title><?php echo $TITLE, isset($_GET["id"]) ? (" - #".$_GET["id"]) : "" , " - Issue Tracker"; ?></title>
+	<title><?php echo $config['title'], isset($_GET["id"]) ? (" - #".$_GET["id"]) : "" , " - Issue Tracker"; ?></title>
 	<meta http-equiv="content-type" content="text/html;charset=utf-8" />
 	<style>
 		html { overflow-y: scroll;}
@@ -369,7 +361,7 @@ function setWatch($id,$addToWatch){
 <div id='container'>
 	<div id="menu">
 		<?php
-			foreach($STATUSES as $code=>$name) {
+			foreach($statuses as $code=>$name) {
 				$style=(isset($_GET[status]) && $_GET[status]==$code) || (isset($issue) && $issue['status']==$code)?"style='font-weight:bold;'":"";
 				echo "<a href='{$_SERVER['PHP_SELF']}?status={$code}' alt='{$name} Issues' $style>{$name} Issues</a> | ";
 			}
@@ -377,7 +369,7 @@ function setWatch($id,$addToWatch){
 		<a href="<?php echo $_SERVER['PHP_SELF']; ?>?logout" alt="Logout">Logout [<?php echo $_SESSION['tit']['username']; ?>]</a>
 	</div>
 
-	<h1><?php echo $TITLE; ?></h1>
+	<h1><?php echo $config['title']; ?></h1>
 
 	<h2><a href="#" onclick="document.getElementById('create').className='';document.getElementById('title').focus();"><?php echo ($issue['id']==''?"Create":"Edit"); ?> Issue <?php echo $issue['id'] ?></a></h2>
 	<div id="create" class='<?php echo isset($_GET['editissue'])?'':'hide'; ?>'>
@@ -400,7 +392,7 @@ function setWatch($id,$addToWatch){
 
 	<?php if ($mode=="list"): ?>
 	<div id="list">
-	<h2><?php if (isset($STATUSES[$_GET['status']])) echo $STATUSES[$_GET['status']]." "; ?>Issues</h2>
+	<h2><?php if (isset($statuses[$_GET['status']])) echo $statuses[$_GET['status']]." "; ?>Issues</h2>
 		<table border=1 cellpadding=5 width="100%">
 			<tr>
 				<th>ID</th>
@@ -445,7 +437,7 @@ function setWatch($id,$addToWatch){
 				<option value="3"<?php echo ($issue['priority']==3?"selected":""); ?>>Low</option>
 			</select>
 			Status <select name="priority" onchange="location='<?php echo $_SERVER['PHP_SELF']; ?>?changestatus&id=<?php echo $issue['id']; ?>&status='+this.value">
-			<?php foreach($STATUSES as $code=>$name): ?>
+			<?php foreach($statuses as $code=>$name): ?>
 				<option value="<?php echo $code; ?>"<?php echo ($issue['status']==$code?"selected":""); ?>><?php echo $name; ?></option>
 			<?php endforeach; ?>
 			</select>
