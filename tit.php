@@ -11,6 +11,26 @@
 // error_reporting(E_ALL);
 // ini_set('display_errors', '1');
 
+// polyfill from https://github.com/symfony/polyfill-php80
+if (!function_exists('str_contains')) {
+    function str_contains(string $haystack, string $needle): bool
+    {
+        return '' === $needle || false !== strpos($haystack, $needle);
+    }
+}
+if (!function_exists('str_starts_with')) {
+    function str_starts_with(string $haystack, string $needle): bool
+    {
+        return 0 === strncmp($haystack, $needle, \strlen($needle));
+    }
+}
+if (!function_exists('str_ends_with')) {
+    function str_ends_with(string $haystack, string $needle): bool
+    {
+        return '' === $needle || ('' !== $haystack && 0 === substr_compare($haystack, $needle, -\strlen($needle)));
+    }
+}
+
 // Configs: if they already exist, add them to the existing ones
 $config = (isset($config) ? $config : []) + [
     'title' => "My Project", // Project Title
@@ -67,17 +87,23 @@ class TinyTemplate {
     }
 
     public function add($names, $value) {
-        if (!is_array($names)) {$names = [$names];}
-        foreach ($names as $name) {
-            $this->vars[$name] = $value;
+        if (is_array($names) && is_array($value)) {
+            foreach ($names as $name) {
+                $this->vars[$name] = $value[$name];
+            }
+        } else {
+            if (!is_array($names)) {$names = [$names];}
+            foreach ($names as $name) {
+                $this->vars[$name] = $value;
+            }
         }
         return $this;
     }
 
     public function fetch($html, $next_variable = null) {
         $result = preg_replace_callback(
-            "/{$this->d[0]}([a-z_-]+){$this->d[1]}/",
-            fn($m) =>  array_key_exists($m[1], $this->vars) ? $this->vars[$m[1]] : '',
+            "/{$this->d[0]}([a-z_-]+)(\|raw)?{$this->d[1]}/",
+            fn($m) =>  array_key_exists($m[1], $this->vars) ? (count($m) == 3 ? $this->vars[$m[1]] : htmlentities($this->vars[$m[1]])) : '',
             $html);
         if (is_null($next_variable)) {
             return $result;
@@ -93,15 +119,15 @@ $base_html_template = <<<'EOD'
   <head>
     <meta charset="utf-8">
     <title>{{ title }}</title>
-    {{ head }}
+    {{ head|raw }}
     <style>
-    {{ style }}
+    {{ style|raw }}
     </style>
   </head>
   <body>
     <div id="container">
       <h1>{{ title }}</h1>
-      {{ body }}
+      {{ body|raw }}
     </div>
   </body>
 </html>
@@ -427,6 +453,49 @@ $menu_html = TinyTemplate::factory()
     ->add('username', $user['username'])
     ->fetch($menu_html_template);
 
+$issue_row_html_template = <<<'EOD'
+<tr class="p{{ priority }}">
+    <td>#{{ id }}</td>
+    <td><a href="{{ base_url }}?id={{ id }}">{{ title }}</a></td>
+    <td>{{ user }}</td>
+    <td>{{ entrytime }}</td>
+    <td>{{ notify }}</td>
+    <td>{{ activity }}</td>
+</tr>
+EOD;
+
+$issues_row_html = [];
+foreach ($issues as $issue) {
+    $issue['notify'] = $user['email'] && strpos($issue['notify_emails'], $user['email']) !== FALSE ? '✓' : '';
+    $issue['activity'] = $issue['comment_user'] ? date("M j",strtotime($issue['comment_time'])) . " (" . $issue['comment_user'] . ")" : "";
+    $issues_row_html[] = TinyTemplate::factory()
+        ->add('base_url', $base_url)
+        ->add(['priority', 'id', 'title', 'user', 'entrytime', 'notify', 'activity'], $issue)
+        ->fetch($issue_row_html_template);
+}
+
+$issues_html_template = <<<'EOD'
+    <div id="list">
+    <h2>{{ status }}Issues</h2>
+        <table border=1 cellpadding=5 width="100%">
+            <tr>
+                <th>ID</th>
+                <th>Title</th>
+                <th>Created by</th>
+                <th>Date</th>
+                <th><acronym title="Watching issue?">W</acronym></th>
+                <th>Activity</th>
+            </tr>
+            {{ issues_rows|raw }}
+        </table>
+    </div>
+EOD;
+
+$issues_html = TinyTemplate::factory()
+    ->add('title', array_key_exists('status', $_GET) && array_key_exists($_GET['status'], $statuses) ? $statuses[$_GET['status']]." " : '')
+    ->add('issues_rows', implode("\n", $issues_row_html))
+    ->fetch($issues_html_template);
+
 ob_start();
 ?>
 
@@ -464,37 +533,7 @@ ob_start();
     </div>
 
     <?php if ($mode=="list"): ?>
-    <div id="list">
-    <h2><?= array_key_exists('status', $_GET) && array_key_exists($_GET['status'], $statuses) ? $statuses[$_GET['status']]." " : '' ?>Issues</h2>
-        <table border=1 cellpadding=5 width="100%">
-            <tr>
-                <th>ID</th>
-                <th>Title</th>
-                <th>Created by</th>
-                <th>Date</th>
-                <th><acronym title="Watching issue?">W</acronym></th>
-                <th>Last Comment</th>
-                <th>Actions</th>
-            </tr>
-            <?php
-            $count=1;
-            foreach ($issues as $issue){
-                $count++;
-                echo "<tr class='p{$issue['priority']}'>\n";
-                echo "<td>{$issue['id']}</a></td>\n";
-                echo "<td><a href='?id={$issue['id']}'>".htmlentities($issue['title'],ENT_COMPAT,"UTF-8")."</a></td>\n";
-                echo "<td>{$issue['user']}</td>\n";
-                echo "<td>{$issue['entrytime']}</td>\n";
-                echo "<td>".($user['email']&&strpos($issue['notify_emails'],$user['email'])!==FALSE?"&#10003;":"")."</td>\n";
-                echo "<td>".($issue['comment_user'] ? date("M j",strtotime($issue['comment_time'])) . " (" . $issue['comment_user'] . ")" : "")."</td>\n";
-                echo "<td><a href='?editissue&id={$issue['id']}'>Edit</a>";
-                if ($user['admin'] || $user['username']==$issue['user']) echo " | <a href='?deleteissue&id={$issue['id']}' onclick='return confirm(\"Are you sure? All comments will be deleted too.\");'>Delete</a>";
-                echo "</td>\n";
-                echo "</tr>\n";
-            }
-            ?>
-        </table>
-    </div>
+    <?= $issues_html ?>
     <?php endif; ?>
 
     <?php if ($mode=="issue"): ?>
@@ -583,8 +622,6 @@ $base_css_rules = <<<'EOD'
         form.link {display:inline;}
         form.link input[type=submit] {background-color:transparent; border:none; cursor: pointer; color:#004989; font-size:11px; font-family:sans-serif; margin:0; padding:0;}
         form.link input[type=submit]:hover {color: #666; text-decoration:underline;}
-        a, a:visited{text-decoration:none;}
-        a:hover{ text-decoration: underline;}
 EOD;
 
 $title = $config['title'] . (isset($_GET["id"]) ? (" - #".$_GET["id"]) : "") . " - Issue Tracker";
