@@ -42,6 +42,17 @@ if (!isset($statuses)) {
     $statuses = array(0 => "Active", 1 => "Resolved");
 }
 
+function get_base_url() {
+    // print('server:<pre>'.print_r($_SERVER, true).'</pre>');
+    $protocol = 'http'.(substr($_SERVER['SERVER_PROTOCOL'], 4, 1) === 'S' ? 's' : '').'://';
+    $base_dir = substr(dirname($_SERVER['SCRIPT_FILENAME']), strlen($_SERVER['DOCUMENT_ROOT']));
+    $port = $_SERVER['SERVER_PORT'] === '80' ? '' : ':'.$_SERVER['SERVER_PORT'];
+    $file = $_SERVER['SCRIPT_NAME'] === '/index.php' ? '' : $_SERVER['SCRIPT_NAME'];
+    return $protocol.$_SERVER['SERVER_NAME'].$port.$base_dir.$file;
+}
+
+$base_url = get_base_url();
+
 class TinyTemplate {
     var $vars = [];
     var $d = ['\{\{ ', ' }}'];
@@ -119,10 +130,9 @@ if ($db->query('select count(*) from users')->fetchColumn() == 0) {
 $login_error = '';
 $user = null;
 
-if (array_key_exists('logout', $_GET)){
+if (array_key_exists('logout', $_POST)){
     unset($_SESSION['tit']);
     $user = null;
-    // header("Location: ".$_SERVER["REQUEST_URI"]);
 } elseif (array_key_exists('login', $_POST)){
     // print('post:<pre>'.print_r($_POST, true).'</pre>');
     $user = get_authenticated_user($db, $_POST['u'] ?? '', $_POST['p'] ?? '');
@@ -148,7 +158,7 @@ EOD;
 if ($user === null) {
     die(TinyTemplate::factory()
         ->add('message', $login_error)
-        ->add('action', $_SERVER["REQUEST_URI"])
+        ->add('action', $base_url)
         ->fetch($login_html_template, 'body')
         ->add('title', $config['title'])
         ->add('style', "body,input {font-family:sans-serif;font-size:11px;}\nlabel{display:block;}")
@@ -408,6 +418,15 @@ function setWatch($id,$addToWatch){
     $db->exec("UPDATE issues SET notify_emails='$notify_emails' WHERE id='$id'");
 }
 
+$menu_html_template = <<<'EOD'
+<form action="{{ base_url }}" method="POST" class="link"><input type="submit" name="logout" value="Logout"></form> {{ username }}
+EOD;
+
+$menu_html = TinyTemplate::factory()
+    ->add('base_url', $base_url)
+    ->add('username', $user['username'])
+    ->fetch($menu_html_template);
+
 ob_start();
 ?>
 
@@ -419,7 +438,7 @@ ob_start();
             }
         ?>
         <?php if (isset($user)) : ?>
-        <a href="<?= $_SERVER['PHP_SELF']; ?>?logout" alt="Logout">Logout [<?= $user['username'] ?>]</a>
+        <?= $menu_html ?>
         <?php endif; ?>
     </div>
 
@@ -560,6 +579,12 @@ $base_css_rules = <<<'EOD'
         .left{float: left;}
         .right{float: right;}
         .clear{clear:both;}
+
+        form.link {display:inline;}
+        form.link input[type=submit] {background-color:transparent; border:none; cursor: pointer; color:#004989; font-size:11px; font-family:sans-serif; margin:0; padding:0;}
+        form.link input[type=submit]:hover {color: #666; text-decoration:underline;}
+        a, a:visited{text-decoration:none;}
+        a:hover{ text-decoration: underline;}
 EOD;
 
 $title = $config['title'] . (isset($_GET["id"]) ? (" - #".$_GET["id"]) : "") . " - Issue Tracker";
