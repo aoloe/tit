@@ -8,6 +8,9 @@
  *      GNU GPL
  */
 
+// error_reporting(E_ALL);
+// ini_set('display_errors', '1');
+
 // Configs: if they already exist, add them to the existing ones
 $config = (isset($config) ? $config : []) + [
     'title' => "My Project", // Project Title
@@ -24,14 +27,14 @@ $config = (isset($config) ? $config : []) + [
     'notify_comment_create' => false,
 ];
 
-// List of users.
-// Mandatory fields: username, password (md5 hash)
+// List of initial users.
+// Mandatory fields: username, password (hash)
 // Optional fields: email, admin (true/false)
 if (!isset($users)) {
-    $users = array(
-        array("username"=>"admin","password"=>md5("admin"),"email"=>"admin@example.com","admin"=>true),
-        array("username"=>"user" ,"password"=>md5("user") ,"email"=>"user@example.com"),
-    );
+    $users = [
+        ['username' => 'admin', 'password' => password_hash('admin', PASSWORD_DEFAULT), 'email' => 'admin@example.com', 'admin' => true],
+        ['username' => 'user', 'password' => password_hash('user', PASSWORD_DEFAULT),'email' => 'user@example.com'],
+    ];
 }
 
 // List of statuses.
@@ -97,22 +100,39 @@ EOD;
 // Here we go...
 session_start();
 
-// check for login post
-$message = "";
-if (isset($_POST["login"])){
-    $n = check_credentials($_POST["u"],md5($_POST["p"]));
-    if ($n>=0){
-        $_SESSION['tit']=$users[$n];
-
-        header("Location: ".$_SERVER["REQUEST_URI"]);
-    }
-    else $message = "Invalid username or password";
+try {
+    $db = new PDO('sqlite:'.$config['db_file']);
+} catch (PDOException $e) {
+    die('DB Connection failed: '.$e->getMessage());
 }
 
-// check for logout
-if (isset($_GET['logout'])){
-    $_SESSION['tit']=array();  // username
-    header("Location: ".$_SERVER["REQUEST_URI"]);
+// Authentication
+
+$db->exec('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT NOT NULL, password TEXT NOT NULL, email TEXT, admin INTEGER NOT NULL)');
+if ($db->query('select count(*) from users')->fetchColumn() == 0) {
+    $stmt = $db->prepare('INSERT INTO users (username, password, email, admin) values (:u, :p, :e, :a)');
+    foreach ($users as $u) {
+        $stmt->execute([':u' => $u['username'], ':p' => $u['password'], ':e' => $u['email'] ?? null, ':a' => $u['admin'] ?? false]);
+    }
+}
+
+$login_error = '';
+$user = null;
+
+if (array_key_exists('logout', $_GET)){
+    unset($_SESSION['tit']);
+    $user = null;
+    // header("Location: ".$_SERVER["REQUEST_URI"]);
+} elseif (array_key_exists('login', $_POST)){
+    // print('post:<pre>'.print_r($_POST, true).'</pre>');
+    $user = get_authenticated_user($db, $_POST['u'] ?? '', $_POST['p'] ?? '');
+    if (isset($user)) {
+        $_SESSION['tit'] = ['user' => $user['username'], 'password' => $user['password']];
+    } else {
+        $login_error = "Invalid username or password";
+    }
+} elseif (array_key_exists('tit', $_SESSION)) {
+    $user = get_authenticated_user($db, $_SESSION['tit']['user'], $_SESSION['tit']['password']);
 }
 
 $login_html_template = <<<'EOD'
@@ -124,26 +144,23 @@ $login_html_template = <<<'EOD'
     </form>
 EOD;
 
-$login_html = TinyTemplate::factory()
-    ->add('message', $message)
-    ->add('action', $_SERVER["REQUEST_URI"])
-    ->fetch($login_html_template, 'body')
-    ->add('title', $config['title'])
-    ->add('style', "body,input {font-family:sans-serif;font-size:11px;}\nlabel{display:block;}")
-    ->add(['head'], '')
-    ->fetch($base_html_template);
-
 // show login page on bad credential
-if (check_credentials($_SESSION['tit']['username'], $_SESSION['tit']['password'])==-1) die($login_html);
-
-// Check if db exists
-try{$db = new PDO('sqlite:'.$config['db_file']);}
-catch (PDOException $e) {die("DB Connection failed: ".$e->getMessage());}
+if ($user === null) {
+    die(TinyTemplate::factory()
+        ->add('message', $login_error)
+        ->add('action', $_SERVER["REQUEST_URI"])
+        ->fetch($login_html_template, 'body')
+        ->add('title', $config['title'])
+        ->add('style', "body,input {font-family:sans-serif;font-size:11px;}\nlabel{display:block;}")
+        ->add(['head'], '')
+        ->fetch($base_html_template));
+}
 
 // create tables if not exist
-@$db->exec("CREATE TABLE issues (id INTEGER PRIMARY KEY, title TEXT, description TEXT, user TEXT, status INTEGER NOT NULL DEFAULT '0', priority INTEGER, notify_emails TEXT, entrytime DATETIME)");
-@$db->exec("CREATE TABLE comments (id INTEGER PRIMARY KEY, issue_id INTEGER, user TEXT, description TEXT, entrytime DATETIME)");
+$db->exec("CREATE TABLE IF NOT EXISTS issues (id INTEGER PRIMARY KEY, title TEXT, description TEXT, user TEXT, status INTEGER NOT NULL DEFAULT '0', priority INTEGER, notify_emails TEXT, entrytime DATETIME)");
+@$db->exec("CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, issue_id INTEGER, user TEXT, description TEXT, entrytime DATETIME)");
 
+$issue = [];
 if (isset($_GET["id"])){
     // show issue #id
     $id=pdo_escape_string($_GET['id']);
@@ -181,13 +198,13 @@ else {
 //
 
 // Create / Edit issue
-if (isset($_POST["createissue"])){
 
+if (isset($_POST["createissue"])){
     $id=pdo_escape_string($_POST['id']);
     $title=pdo_escape_string($_POST['title']);
     $description=pdo_escape_string($_POST['description']);
     $priority=pdo_escape_string($_POST['priority']);
-    $user=pdo_escape_string($_SESSION['tit']['username']);
+    $user=pdo_escape_string($user['username']);
     $now=date("Y-m-d H:i:s");
 
     // gather all emails
@@ -230,14 +247,14 @@ if (isset($_GET["deleteissue"])){
     $title=get_col($id,"issues","title");
 
     // only the issue creator or admin can delete issue
-    if ($_SESSION['tit']['admin'] || $_SESSION['tit']['username']==get_col($id,"issues","user")){
+    if ($user['admin'] || $user['username']==get_col($id,"issues","user")){
         @$db->exec("DELETE FROM issues WHERE id='$id'");
         @$db->exec("DELETE FROM comments WHERE issue_id='$id'");
 
         if ($config['notify_issue_delete'])
             notify( $id,
                             "[".$config['title']."] Issue Deleted",
-                            "Issue deleted by {$_SESSION['tit']['username']}\r\nTitle: $title");
+                            "Issue deleted by {$user['username']}\r\nTitle: $title");
     }
     header("Location: {$_SERVER['PHP_SELF']}");
 
@@ -252,7 +269,7 @@ if (isset($_GET["changepriority"])){
     if ($config['notify_issue_priority'])
         notify( $id,
                         "[".$config['title']."] Issue Priority Changed",
-                        "Issue Priority changed by {$_SESSION['tit']['username']}\r\nTitle: ".get_col($id,"issues","title")."\r\nURL: http://{$_SERVER['HTTP_HOST']}{$_SERVER['PHP_SELF']}?id=$id");
+                        "Issue Priority changed by {$user['username']}\r\nTitle: ".get_col($id,"issues","title")."\r\nURL: http://{$_SERVER['HTTP_HOST']}{$_SERVER['PHP_SELF']}?id=$id");
 
     header("Location: {$_SERVER['PHP_SELF']}?id=$id");
 }
@@ -266,7 +283,7 @@ if (isset($_GET["changestatus"])){
     if ($config['notify_issue_status'])
         notify( $id,
                         "[".$config['title']."] Issue Marked as ".$statuses[$status],
-                        "Issue marked as {$statuses[$status]} by {$_SESSION['u']}\r\nTitle: ".get_col($id,"issues","title")."\r\nURL: http://{$_SERVER['HTTP_HOST']}{$_SERVER['PHP_SELF']}?id=$id");
+                        "Issue marked as {$statuses[$status]} by {$user['username']}\r\nTitle: ".get_col($id,"issues","title")."\r\nURL: http://{$_SERVER['HTTP_HOST']}{$_SERVER['PHP_SELF']}?id=$id");
 
     header("Location: {$_SERVER['PHP_SELF']}?id=$id");
 }
@@ -291,7 +308,7 @@ if (isset($_POST["createcomment"])){
 
     $issue_id=pdo_escape_string($_POST['issue_id']);
     $description=pdo_escape_string($_POST['description']);
-    $user=$_SESSION['tit']['username'];
+    $user=$user['username'];
     $now=date("Y-m-d H:i:s");
 
     if (trim($description)!=''){
@@ -314,7 +331,7 @@ if (isset($_GET["deletecomment"])){
     $cid=pdo_escape_string($_GET['cid']);
 
     // only comment poster or admin can delete comment
-    if ($_SESSION['tit']['admin'] || $_SESSION['tit']['username']==get_col($cid,"comments","user"))
+    if ($user['admin'] || $user['username']==get_col($cid,"comments","user"))
         $db->exec("DELETE FROM comments WHERE id='$cid'");
 
     header("Location: {$_SERVER['PHP_SELF']}?id=$id");
@@ -331,16 +348,19 @@ function pdo_escape_string($str){
     return ($db->quote("")=="''")?substr($quoted, 1, strlen($quoted)-2):$quoted;
 }
 
-// check credentials, returns -1 if not okay
-function check_credentials($u, $p){
-    global $users;
-
-    $n=0;
-    foreach ($users as $user){
-        if (strcasecmp($user['username'],$u)===0 && $user['password']==$p) return $n;
-        $n++;
+function get_authenticated_user($db, $u, $p) {
+    $u = mb_strtolower($u);
+    $stmt = $db->prepare('SELECT username, password, email, admin FROM users WHERE username = :u LIMIT 1');
+    $stmt->execute([':u' => $u]);
+    if (($user = $stmt->fetch()) === false) {
+        return null;
     }
-    return -1;
+
+    // TODO: a bit hacky, but is it really an issue?
+    if (password_verify($p, $user['password']) || $p == $user['password']) {
+        return $user;
+    }
+    return null;
 }
 
 // get column from some table with $id
@@ -366,18 +386,20 @@ function notify($id, $subject, $body){
 }
 
 // start/stop watching an issue
-function watchFilterCallback($email) { return $email != $_SESSION['tit']['email']; }
+// TODO: use a lambda with use($user)
+function watchFilterCallback($email) { global $user; return $email != $user['email']; }
 
 function setWatch($id,$addToWatch){
     global $db;
-    if ($_SESSION['tit']['email']=='') return;
+    global $user;
+    if ($user['email']=='') return;
 
     $result = $db->query("SELECT notify_emails FROM issues WHERE id='$id'")->fetchAll();
     $notify_emails = $result[0]['notify_emails'];
 
     $emails = $notify_emails ? explode(",",$notify_emails) : array();
 
-    if ($addToWatch) $emails[] = $_SESSION['tit']['email'];
+    if ($addToWatch) $emails[] = $user['email'];
     else $emails = array_filter( $emails, "watchFilterCallback" );
     $emails = array_unique($emails);
 
@@ -392,24 +414,26 @@ ob_start();
     <div id="menu">
         <?php
             foreach($statuses as $code=>$name) {
-                $style=(isset($_GET[status]) && $_GET[status]==$code) || (isset($issue) && $issue['status']==$code)?"style='font-weight:bold;'":"";
+                $style=(isset($_GET['status']) && $_GET['status']==$code) || (isset($issue) && $issue['status']==$code)?"style='font-weight:bold;'":"";
                 echo "<a href='{$_SERVER['PHP_SELF']}?status={$code}' alt='{$name} Issues' $style>{$name} Issues</a> | ";
             }
         ?>
-        <a href="<?= $_SERVER['PHP_SELF']; ?>?logout" alt="Logout">Logout [<?= $_SESSION['tit']['username']; ?>]</a>
+        <?php if (isset($user)) : ?>
+        <a href="<?= $_SERVER['PHP_SELF']; ?>?logout" alt="Logout">Logout [<?= $user['username'] ?>]</a>
+        <?php endif; ?>
     </div>
 
     <h1><?= $config['title']; ?></h1>
 
-    <h2><a href="#" onclick="document.getElementById('create').className='';document.getElementById('title').focus();"><?= ($issue['id']==''?"Create":"Edit"); ?> Issue <?= $issue['id'] ?></a></h2>
+    <h2><a href="#" onclick="document.getElementById('create').className='';document.getElementById('title').focus();"><?= isset($issue) ? "Edit" : "Create" ?> Issue <?= isset($issue) ? $issue['id'] : '' ?></a></h2>
     <div id="create" class='<?= isset($_GET['editissue'])?'':'hide'; ?>'>
         <a href="#" onclick="document.getElementById('create').className='hide';" style="float: right;">[Close]</a>
         <form method="POST">
-            <input type="hidden" name="id" value="<?= $issue['id']; ?>" />
-            <label>Title</label><input type="text" size="50" name="title" id="title" value="<?= htmlentities($issue['title']); ?>" />
-            <label>Description</label><textarea name="description" rows="5" cols="50"><?= htmlentities($issue['description']); ?></textarea>
-            <label></label><input type="submit" name="createissue" value="<?= ($issue['id']==''?"Create":"Edit"); ?>" />
-<?php if (!$issue['id']) : ?>
+            <input type="hidden" name="id" value="<?= $issue['id'] ?? '' ?>" />
+            <label>Title</label><input type="text" size="50" name="title" id="title" value="<?= htmlentities($issue['title'] ?? '') ?>" />
+            <label>Description</label><textarea name="description" rows="5" cols="50"><?= htmlentities($issue['description'] ?? '') ?></textarea>
+            <label></label><input type="submit" name="createissue" value="<?= (isset($issue) ? "Edit" : "Create") ?>" />
+<?php if (!isset($issue)) : ?>
             Priority
                 <select name="priority">
                     <option value="1">High</option>
@@ -422,7 +446,7 @@ ob_start();
 
     <?php if ($mode=="list"): ?>
     <div id="list">
-    <h2><?php if (isset($statuses[$_GET['status']])) echo $statuses[$_GET['status']]." "; ?>Issues</h2>
+    <h2><?= array_key_exists('status', $_GET) && array_key_exists($_GET['status'], $statuses) ? $statuses[$_GET['status']]." " : '' ?>Issues</h2>
         <table border=1 cellpadding=5 width="100%">
             <tr>
                 <th>ID</th>
@@ -442,10 +466,10 @@ ob_start();
                 echo "<td><a href='?id={$issue['id']}'>".htmlentities($issue['title'],ENT_COMPAT,"UTF-8")."</a></td>\n";
                 echo "<td>{$issue['user']}</td>\n";
                 echo "<td>{$issue['entrytime']}</td>\n";
-                echo "<td>".($_SESSION['tit']['email']&&strpos($issue['notify_emails'],$_SESSION['tit']['email'])!==FALSE?"&#10003;":"")."</td>\n";
+                echo "<td>".($user['email']&&strpos($issue['notify_emails'],$user['email'])!==FALSE?"&#10003;":"")."</td>\n";
                 echo "<td>".($issue['comment_user'] ? date("M j",strtotime($issue['comment_time'])) . " (" . $issue['comment_user'] . ")" : "")."</td>\n";
                 echo "<td><a href='?editissue&id={$issue['id']}'>Edit</a>";
-                if ($_SESSION['tit']['admin'] || $_SESSION['tit']['username']==$issue['user']) echo " | <a href='?deleteissue&id={$issue['id']}' onclick='return confirm(\"Are you sure? All comments will be deleted too.\");'>Delete</a>";
+                if ($user['admin'] || $user['username']==$issue['user']) echo " | <a href='?deleteissue&id={$issue['id']}' onclick='return confirm(\"Are you sure? All comments will be deleted too.\");'>Delete</a>";
                 echo "</td>\n";
                 echo "</tr>\n";
             }
@@ -476,7 +500,7 @@ ob_start();
             <form method="POST">
                 <input type="hidden" name="id" value="<?php echo $issue['id']; ?>" />
                 <?php
-                    if ($_SESSION['tit']['email']&&strpos($issue['notify_emails'],$_SESSION['tit']['email'])===FALSE)
+                    if ($user['email']&&strpos($issue['notify_emails'],$user['email'])===FALSE)
                         echo "<input type='submit' name='watch' value='Watch' />\n";
                     else
                         echo "<input type='submit' name='unwatch' value='Unwatch' />\n";
@@ -490,7 +514,7 @@ ob_start();
             foreach ($comments as $comment){
                 echo "<div class='comment' id='c".$comment['id']."'><p>".nl2br( preg_replace("/([a-z]+:\/\/\S+)/","<a href='$1'>$1</a>",htmlentities($comment['description'],ENT_COMPAT,"UTF-8") ) )."</p>";
                 echo "<div class='comment-meta'><em>{$comment['user']}</em> on <em><a href='#c".$comment['id']."'>{$comment['entrytime']}</a></em> ";
-                if ($_SESSION['tit']['admin'] || $_SESSION['tit']['username']==$comment['user']) echo "<span class='right'><a href='{$_SERVER['PHP_SELF']}?deletecomment&id={$issue['id']}&cid={$comment['id']}' onclick='return confirm(\"Are you sure?\");'>Delete</a></span>";
+                if ($user['admin'] || $user['username']==$comment['user']) echo "<span class='right'><a href='{$_SERVER['PHP_SELF']}?deletecomment&id={$issue['id']}&cid={$comment['id']}' onclick='return confirm(\"Are you sure?\");'>Delete</a></span>";
                 echo "</div></div>\n";
             }
             ?>
